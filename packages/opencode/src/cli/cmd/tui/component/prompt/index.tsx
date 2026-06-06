@@ -25,7 +25,7 @@ import { useSync } from "@tui/context/sync"
 import { useEvent } from "@tui/context/event"
 import { editorSelectionKey, useEditorContext, type EditorSelection } from "@tui/context/editor"
 import { MessageID, PartID } from "@/session/schema"
-import { promptOffsetWidth } from "@/cli/cmd/prompt-display"
+import { displaySlice, promptOffsetWidth } from "@/cli/cmd/prompt-display"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { usePromptHistory, type PromptInfo } from "./history"
 import { computePromptTraits } from "./traits"
@@ -1174,6 +1174,66 @@ export function Prompt(props: PromptProps) {
   async function pasteInputText(text: string) {
     const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
     const pastedContent = normalizedText.trim()
+
+    // If cursor is at an existing paste placeholder, expand it inline
+    const cursorOffset = input.cursorOffset
+    const extmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
+    for (const extmark of extmarks) {
+      if (cursorOffset >= extmark.start && cursorOffset <= extmark.end + 1) {
+        const partIndex = store.extmarkToPartIndex.get(extmark.id)
+        if (partIndex !== undefined) {
+          const part = store.prompt.parts[partIndex]
+          if (part?.type === "text" && part.text) {
+            const fullText = part.text
+            const before = displaySlice(input.plainText, 0, extmark.start)
+            const after = displaySlice(input.plainText, extmark.end)
+            const newText = before + fullText + after
+            const placeholderWidth = extmark.end - extmark.start
+            const fullTextWidth = promptOffsetWidth(fullText)
+            const delta = fullTextWidth - placeholderWidth
+
+            const newParts: PromptInfo["parts"] = []
+            for (let i = 0; i < store.prompt.parts.length; i++) {
+              if (i === partIndex) continue
+              const p = store.prompt.parts[i]
+              if (p.type === "text" && p.source?.text && p.source.text.start >= extmark.end) {
+                newParts.push({
+                  ...p,
+                  source: { ...p.source, text: { ...p.source.text, start: p.source.text.start + delta, end: p.source.text.end + delta } },
+                })
+              } else if (p.type === "file" && p.source?.text && p.source.text.start >= extmark.end) {
+                newParts.push({
+                  ...p,
+                  source: { ...p.source, text: { ...p.source.text, start: p.source.text.start + delta, end: p.source.text.end + delta } },
+                })
+              } else if (p.type === "agent" && p.source && p.source.start >= extmark.end) {
+                newParts.push({
+                  ...p,
+                  source: { ...p.source, start: p.source.start + delta, end: p.source.end + delta },
+                })
+              } else {
+                newParts.push(p)
+              }
+            }
+
+            input.extmarks.clear()
+            input.setText(newText)
+            input.cursorOffset = extmark.start + fullTextWidth
+
+            setStore("prompt", produce((draft) => {
+              draft.input = newText
+              draft.parts = newParts
+            }))
+            restoreExtmarksFromParts(newParts)
+
+            input.getLayoutNode().markDirty()
+            renderer.requestRender()
+            return
+          }
+        }
+      }
+    }
+
     const filepath = iife(() => {
       const raw = pastedContent.replace(/^['"]+|['"]+$/g, "")
       if (raw.startsWith("file://")) {
