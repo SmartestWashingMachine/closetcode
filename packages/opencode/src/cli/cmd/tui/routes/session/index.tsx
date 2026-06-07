@@ -1330,7 +1330,8 @@ export function Session() {
                       onSearchSelect={(match) => {
                         const child = scroll.getChildren().find((c) => c.id === match.messageID)
                         if (!child) return
-                        scroll.scrollBy(child.y - scroll.y - 1)
+                        const targetY = child.y + child.height * match.ratio
+                        scroll.scrollBy(targetY - scroll.y - scroll.height / 2)
                       }}
                       sessionID={route.sessionID}
                       right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
