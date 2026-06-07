@@ -58,6 +58,8 @@ import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut, useLeaderActive, u
 import { useTuiConfig } from "../../context/tui-config"
 import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
+import { type SearchMatch, findMatches } from "@tui/util/search"
+import type { Part } from "@opencode-ai/sdk/v2"
 
 export type PromptProps = {
   sessionID?: string
@@ -65,6 +67,9 @@ export type PromptProps = {
   disabled?: boolean
   onSubmit?: () => void
   ref?: (ref: PromptRef | undefined) => void
+  onSearchSelect?: (match: SearchMatch) => void
+  onSearch?: (query: string, matches: SearchMatch[], currentIndex: number) => void
+  onSearchActive?: (active: boolean) => void
   hint?: JSX.Element
   right?: JSX.Element
   showPlaceholder?: boolean
@@ -263,12 +268,17 @@ export function Prompt(props: PromptProps) {
     }
   })
 
+  let stashedPrompt: PromptInfo | undefined
+  let stashedCursor: number | undefined
   const [store, setStore] = createStore<{
     prompt: PromptInfo
-    mode: "normal" | "shell"
+    mode: "normal" | "shell" | "search"
     extmarkToPartIndex: Map<number, number>
     interrupt: number
     placeholder: number
+    searchQuery: string
+    searchMatches: SearchMatch[]
+    searchCurrentIndex: number
   }>({
     placeholder: randomIndex(list().length),
     prompt: {
@@ -278,6 +288,9 @@ export function Prompt(props: PromptProps) {
     mode: "normal",
     extmarkToPartIndex: new Map(),
     interrupt: 0,
+    searchQuery: "",
+    searchMatches: [],
+    searchCurrentIndex: 0,
   })
 
   createEffect(
@@ -376,15 +389,19 @@ export function Prompt(props: PromptProps) {
         name: "session.interrupt",
         category: "Session",
         hidden: true,
-        enabled: status().type !== "idle",
-        run: () => {
-          if (auto()?.visible) return
-          if (!input.focused) return
-          // TODO: this should be its own command
-          if (store.mode === "shell") {
-            setStore("mode", "normal")
-            return
-          }
+          enabled: status().type !== "idle",
+          run: () => {
+            if (auto()?.visible) return
+            if (!input.focused) return
+            // TODO: this should be its own command
+            if (store.mode === "search") {
+              exitSearchMode()
+              return
+            }
+            if (store.mode === "shell") {
+              setStore("mode", "normal")
+              return
+            }
           if (!props.sessionID) return
 
           setStore("interrupt", store.interrupt + 1)
@@ -839,6 +856,116 @@ export function Prompt(props: PromptProps) {
     }
   })
 
+  function enterSearchMode() {
+    stashedPrompt = { input: store.prompt.input, parts: store.prompt.parts }
+    stashedCursor = input.cursorOffset
+    input.extmarks.clear()
+    input.clear()
+    setStore("prompt", { input: "", parts: [] })
+    setStore("extmarkToPartIndex", new Map())
+    setStore("searchQuery", "")
+    setStore("searchMatches", [])
+    setStore("searchCurrentIndex", 0)
+    setStore("mode", "search")
+    props.onSearchActive?.(true)
+  }
+
+  function exitSearchMode() {
+    setStore("mode", "normal")
+    if (stashedPrompt) {
+      input.setText(stashedPrompt.input)
+      setStore("prompt", stashedPrompt)
+      restoreExtmarksFromParts(stashedPrompt.parts)
+      if (stashedCursor !== undefined) input.cursorOffset = stashedCursor
+    }
+    stashedPrompt = undefined
+    stashedCursor = undefined
+    props.onSearchActive?.(false)
+  }
+
+  useBindings(() => {
+    return {
+      target: inputTarget,
+      enabled: inputTarget() !== undefined && !props.disabled && store.mode === "normal",
+      priority: 1,
+      commands: [
+        {
+          namespace: "palette",
+          name: "session.search",
+          title: "Search messages",
+          category: "Session",
+          run: () => enterSearchMode(),
+        },
+      ],
+      bindings: tuiConfig.keybinds.gather("session", ["session.search"]),
+    }
+  })
+
+  useBindings(() => {
+    return {
+      target: inputTarget,
+      enabled: inputTarget() !== undefined && store.mode === "search",
+      bindings: [
+        { key: "escape", desc: "Exit search", group: "Prompt", cmd: () => exitSearchMode() },
+      ],
+    }
+  })
+
+  useBindings(() => {
+    return {
+      target: inputTarget,
+      enabled: inputTarget() !== undefined && store.mode === "search" && store.searchMatches.length > 0,
+      bindings: [
+        {
+          key: "up",
+          desc: "Previous match",
+          group: "Prompt",
+          cmd: () => {
+            const prev = store.searchCurrentIndex > 0 ? store.searchCurrentIndex - 1 : store.searchMatches.length - 1
+            setStore("searchCurrentIndex", prev)
+            const match = store.searchMatches[prev]
+            if (match) {
+              props.onSearch?.(store.searchQuery, store.searchMatches, prev)
+              props.onSearchSelect?.(match)
+            }
+          },
+        },
+        {
+          key: "down",
+          desc: "Next match",
+          group: "Prompt",
+          cmd: () => {
+            const next = store.searchCurrentIndex < store.searchMatches.length - 1 ? store.searchCurrentIndex + 1 : 0
+            setStore("searchCurrentIndex", next)
+            const match = store.searchMatches[next]
+            if (match) {
+              props.onSearch?.(store.searchQuery, store.searchMatches, next)
+              props.onSearchSelect?.(match)
+            }
+          },
+        },
+      ],
+    }
+  })
+
+  createEffect(() => {
+    if (store.mode !== "search" || !props.sessionID) return
+    const query = store.searchQuery
+    const parts = sync.data.part
+    const messages = sync.data.message[props.sessionID]
+    if (!messages || messages.length === 0) return
+    const partsByMessage: Record<string, Part[]> = {}
+    for (const msg of messages) {
+      const msgParts = parts[msg.id]
+      if (msgParts) partsByMessage[msg.id] = msgParts
+    }
+    const matches = findMatches(partsByMessage, query)
+    setStore("searchMatches", matches)
+    setStore("searchCurrentIndex", 0)
+    props.onSearch?.(query, matches, 0)
+    if (matches.length > 0) props.onSearchSelect?.(matches[0])
+  })
+
   useBindings(() => {
     return {
       target: inputTarget,
@@ -909,6 +1036,11 @@ export function Prompt(props: PromptProps) {
 
   let submitting = false
   async function submit() {
+    // In search mode, Enter exits search mode instead of submitting
+    if (store.mode === "search") {
+      exitSearchMode()
+      return false
+    }
     // Prevent overlapping invocations (e.g. a double-pressed Enter, or the
     // input's native onSubmit racing another dispatch). Without this guard,
     // a second call slips past the empty-input check before the first call
@@ -1111,7 +1243,7 @@ export function Prompt(props: PromptProps) {
     }
     history.append({
       ...store.prompt,
-      mode: currentMode,
+      mode: currentMode === "search" ? "normal" : currentMode,
     })
     input.extmarks.clear()
     setStore("prompt", {
@@ -1340,6 +1472,10 @@ export function Prompt(props: PromptProps) {
   }
 
   function clearPrompt() {
+    if (store.mode === "search") {
+      exitSearchMode()
+      return
+    }
     if (store.prompt.input.trim().length >= DRAFT_RETENTION_MIN_CHARS || store.prompt.parts.length > 0) {
       history.append({
         ...store.prompt,
@@ -1357,6 +1493,7 @@ export function Prompt(props: PromptProps) {
 
   const highlight = createMemo(() => {
     if (leader()) return theme.border
+    if (store.mode === "search") return theme.primary
     if (store.mode === "shell") return theme.primary
     const agent = local.agent.current()
     if (!agent) return theme.border
@@ -1370,7 +1507,7 @@ export function Prompt(props: PromptProps) {
     return !!current
   })
 
-  const agentMetaAlpha = createFadeIn(() => !!local.agent.current(), animationsEnabled)
+  const agentMetaAlpha = createFadeIn(() => !!local.agent.current() && store.mode !== "search", animationsEnabled)
   const modelMetaAlpha = createFadeIn(() => !!local.agent.current() && store.mode === "normal", animationsEnabled)
   const variantMetaAlpha = createFadeIn(
     () => !!local.agent.current() && store.mode === "normal" && showVariant(),
@@ -1380,6 +1517,7 @@ export function Prompt(props: PromptProps) {
 
   const placeholderText = createMemo(() => {
     if (props.showPlaceholder === false) return undefined
+    if (store.mode === "search") return 'Search messages...'
     if (store.mode === "shell") {
       if (!shell().length) return undefined
       const example = shell()[store.placeholder % shell().length]
@@ -1446,6 +1584,10 @@ export function Prompt(props: PromptProps) {
               maxHeight={maxHeight()}
               onContentChange={() => {
                 const value = input.plainText
+                if (store.mode === "search") {
+                  setStore("searchQuery", value)
+                  return
+                }
                 setStore("prompt", "input", value)
                 auto()?.onInput(value)
                 syncExtmarksWithPromptParts()
@@ -1515,7 +1657,7 @@ export function Prompt(props: PromptProps) {
                   {(agent) => (
                     <>
                       <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name)}
+                        {store.mode === "shell" ? "Shell" : store.mode === "search" ? "Search" : Locale.titlecase(agent().name)}
                       </text>
                       <Show when={store.mode === "normal"}>
                         <box flexDirection="row" gap={1}>
@@ -1707,6 +1849,19 @@ export function Prompt(props: PromptProps) {
                 <text fg={theme.accent}>(new working copy)</text>
               </box>
             </Match>
+            <Match when={store.mode === "search"}>
+              <box paddingLeft={3}>
+                <text fg={theme.primary}>Search</text>
+                <text fg={theme.textMuted}>
+                  {(() => {
+                    const total = store.searchMatches.length
+                    const current = store.searchCurrentIndex
+                    if (total === 0) return ": 0 of 0"
+                    return `: ${current + 1} of ${total}`
+                  })()}
+                </text>
+              </box>
+            </Match>
             <Match when={true}>{props.hint ?? <text />}</Match>
           </Switch>
           <Show when={status().type !== "retry"}>
@@ -1739,6 +1894,11 @@ export function Prompt(props: PromptProps) {
                 <Match when={store.mode === "shell"}>
                   <text fg={theme.text}>
                     esc <span style={{ fg: theme.textMuted }}>exit shell mode</span>
+                  </text>
+                </Match>
+                <Match when={store.mode === "search"}>
+                  <text fg={theme.text}>
+                    esc <span style={{ fg: theme.textMuted }}>exit search</span>
                   </text>
                 </Match>
               </Switch>

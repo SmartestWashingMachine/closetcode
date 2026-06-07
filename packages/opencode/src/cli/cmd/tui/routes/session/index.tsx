@@ -40,6 +40,7 @@ import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
 import { ShellTool } from "@/tool/shell"
 import { ShellID } from "@/tool/shell/id"
+import type { SearchMatch } from "@tui/util/search"
 import type { GlobTool } from "@/tool/glob"
 import { TodoWriteTool } from "@/tool/todo"
 import type { GrepTool } from "@/tool/grep"
@@ -341,6 +342,12 @@ export function Session() {
   const keymap = useOpencodeKeymap()
   const dialog = useDialog()
   const renderer = useRenderer()
+
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [searchMatchIDs, setSearchMatchIDs] = createSignal(new Set<string>())
+  const [searchMatches, setSearchMatches] = createSignal<SearchMatch[]>([])
+  const [searchCurrentIndex, setSearchCurrentIndex] = createSignal(0)
+  let lastSnappedMatch: { messageID: string; ratio: number } | undefined
 
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
@@ -1281,6 +1288,10 @@ export function Session() {
                           message={message as UserMessage}
                           parts={sync.data.part[message.id] ?? []}
                           pending={pending()}
+                          searchQuery={searchQuery()}
+                          searchMatchIDs={searchMatchIDs()}
+                          searchMatches={searchMatches()}
+                          searchCurrentIndex={searchCurrentIndex()}
                         />
                       </Match>
                       <Match when={message.role === "assistant"}>
@@ -1288,6 +1299,10 @@ export function Session() {
                           last={lastAssistant()?.id === message.id}
                           message={message as AssistantMessage}
                           parts={sync.data.part[message.id] ?? []}
+                          searchQuery={searchQuery()}
+                          searchMatchIDs={searchMatchIDs()}
+                          searchMatches={searchMatches()}
+                          searchCurrentIndex={searchCurrentIndex()}
                         />
                       </Match>
                     </Switch>
@@ -1326,6 +1341,30 @@ export function Session() {
                       disabled={disabled()}
                       onSubmit={() => {
                         toBottom()
+                      }}
+                      onSearchSelect={(match) => {
+                        const prev = lastSnappedMatch
+                        lastSnappedMatch = { messageID: match.messageID, ratio: match.ratio }
+                        if (prev?.messageID === match.messageID && prev?.ratio === match.ratio) return
+                        const child = scroll.getChildren().find((c) => c.id === match.messageID)
+                        if (!child) return
+                        const targetY = child.y + child.height * match.ratio
+                        scroll.scrollTo(Math.max(0, targetY - scroll.height / 2))
+                      }}
+                      onSearch={(query, matches, currentIndex) => {
+                        setSearchQuery(query)
+                        setSearchMatchIDs(new Set(matches.map((m) => m.messageID)))
+                        setSearchMatches(matches)
+                        setSearchCurrentIndex(currentIndex)
+                      }}
+                      onSearchActive={(active) => {
+                        if (!active) {
+                          setSearchQuery("")
+                          setSearchMatchIDs(new Set<string>())
+                          setSearchMatches([])
+                          setSearchCurrentIndex(0)
+                          lastSnappedMatch = undefined
+                        }
                       }}
                       sessionID={route.sessionID}
                       right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
@@ -1372,12 +1411,42 @@ const MIME_BADGE: Record<string, string> = {
   "application/x-directory": "dir",
 }
 
+type HighlightSegment = string | { highlight: true; active?: boolean; text: string }
+
+function splitHighlight(text: string, query: string, activeCharIndex?: number): HighlightSegment[] {
+  if (!query) return [text]
+  const lowerText = text.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  const parts: HighlightSegment[] = []
+  let pos = 0
+  let idx = lowerText.indexOf(lowerQuery)
+  while (idx !== -1) {
+    if (idx > pos) parts.push(text.slice(pos, idx))
+    const active = activeCharIndex !== undefined && idx === activeCharIndex
+    parts.push({ highlight: true, active, text: text.slice(idx, idx + query.length) })
+    pos = idx + query.length
+    idx = lowerText.indexOf(lowerQuery, pos)
+  }
+  if (pos < text.length) parts.push(text.slice(pos))
+  return parts
+}
+
+function activeMatchCharIndex(searchMatches: SearchMatch[], searchCurrentIndex: number, messageID: string): number | undefined {
+  const match = searchMatches[searchCurrentIndex]
+  if (!match || match.messageID !== messageID) return undefined
+  return match.charIndex
+}
+
 function UserMessage(props: {
   message: UserMessage
   parts: Part[]
   onMouseUp: () => void
   index: number
   pending?: string
+  searchQuery?: string
+  searchMatchIDs?: Set<string>
+  searchMatches?: SearchMatch[]
+  searchCurrentIndex?: number
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1401,6 +1470,16 @@ function UserMessage(props: {
   const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
+
+  const activeCharIndex = createMemo(() => {
+    if (props.searchMatches === undefined || props.searchCurrentIndex === undefined) return undefined
+    return activeMatchCharIndex(props.searchMatches, props.searchCurrentIndex, props.message.id)
+  })
+
+  const highlightedParts = createMemo(() => {
+    if (!props.searchQuery || !props.searchMatchIDs?.has(props.message.id)) return undefined
+    return splitHighlight(text(), props.searchQuery, activeCharIndex())
+  })
 
   return (
     <>
@@ -1426,7 +1505,21 @@ function UserMessage(props: {
             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
             flexShrink={0}
           >
-            <text fg={theme.text}>{text()}</text>
+            <text fg={theme.text}>
+              <Show when={highlightedParts()} fallback={text()}>
+                <For each={highlightedParts()}>
+                  {(part) =>
+                    typeof part === "string" ? (
+                      part
+                    ) : part.active ? (
+                      <span style={{ bg: theme.accent, fg: theme.background }}>{part.text}</span>
+                    ) : (
+                      <span style={{ bg: theme.primary, fg: theme.background }}>{part.text}</span>
+                    )
+                  }
+                </For>
+              </Show>
+            </text>
             <Show when={files().length}>
               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
                 <For each={files()}>
@@ -1478,7 +1571,15 @@ function UserMessage(props: {
   )
 }
 
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: {
+  message: AssistantMessage
+  parts: Part[]
+  last: boolean
+  searchQuery?: string
+  searchMatchIDs?: Set<string>
+  searchMatches?: SearchMatch[]
+  searchCurrentIndex?: number
+}) {
   const ctx = use()
   const local = useLocal()
   const { theme } = useTheme()
@@ -1501,11 +1602,38 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const childShortcut = useCommandShortcut("session.child.first")
   const backgroundShortcut = useCommandShortcut("session.background")
 
+  const textPartOffsets = createMemo(() => {
+    const offsets: Record<string, number> = {}
+    let offset = 0
+    for (const p of props.parts) {
+      if (p.type === "text" && !p.synthetic && !p.ignored) {
+        offsets[p.id] = offset
+        offset += p.text.length
+      }
+    }
+    return offsets
+  })
+
+  const activeMatch = createMemo(() => {
+    if (!props.searchMatches?.length || props.searchCurrentIndex === undefined) return undefined
+    return props.searchMatches[props.searchCurrentIndex]
+  })
+
   return (
-    <>
+    <box id={props.message.id}>
       <For each={props.parts}>
         {(part, index) => {
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
+          const textOffset = createMemo(() => textPartOffsets()[part.id])
+          const partActiveCharIndex = createMemo(() => {
+            const match = activeMatch()
+            if (!match || match.messageID !== props.message.id) return undefined
+            const offset = textOffset()
+            if (offset === undefined) return undefined
+            const relative = match.charIndex - offset
+            if (relative < 0 || relative >= ((part as any).text?.length ?? 0)) return undefined
+            return relative
+          })
           return (
             <Show when={component()}>
               <Dynamic
@@ -1513,6 +1641,9 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
                 component={component()}
                 part={part as any}
                 message={props.message}
+                searchQuery={props.searchQuery}
+                searchMatchIDs={props.searchMatchIDs}
+                activeCharIndex={partActiveCharIndex()}
               />
             </Show>
           )
@@ -1579,7 +1710,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           </box>
         </Match>
       </Switch>
-    </>
+    </box>
   )
 }
 
@@ -1692,22 +1823,58 @@ function ReasoningHeader(props: {
   )
 }
 
-function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
+function TextPart(props: {
+  last: boolean
+  part: TextPart
+  message: AssistantMessage
+  searchQuery?: string
+  searchMatchIDs?: Set<string>
+  activeCharIndex?: number
+}) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const showHighlight = createMemo(() => {
+    if (!props.searchQuery || !props.searchMatchIDs?.has(props.message.id)) return false
+    return props.part.text.toLowerCase().includes(props.searchQuery.toLowerCase())
+  })
+  const trimmed = createMemo(() => props.part.text.trim())
+  const trimmedOffset = createMemo(() => props.part.text.length - props.part.text.trimStart().length)
+  const localActiveCharIndex = createMemo(() => {
+    if (props.activeCharIndex === undefined) return undefined
+    return props.activeCharIndex - trimmedOffset()
+  })
   return (
-    <Show when={props.part.text.trim()}>
+    <Show when={trimmed()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
-        <markdown
-          syntaxStyle={syntax()}
-          streaming={true}
-          internalBlockMode="top-level"
-          content={props.part.text.trim()}
-          tableOptions={{ style: "grid" }}
-          conceal={ctx.conceal()}
-          fg={theme.markdownText}
-          bg={theme.background}
-        />
+        <Switch>
+          <Match when={showHighlight()}>
+            <text fg={theme.text} wrapMode="word">
+              <For each={splitHighlight(trimmed(), props.searchQuery!, localActiveCharIndex())}>
+                {(part) =>
+                  typeof part === "string" ? (
+                    part
+                  ) : part.active ? (
+                    <span style={{ bg: theme.accent, fg: theme.background }}>{part.text}</span>
+                  ) : (
+                    <span style={{ bg: theme.primary, fg: theme.background }}>{part.text}</span>
+                  )
+                }
+              </For>
+            </text>
+          </Match>
+          <Match when={true}>
+            <markdown
+              syntaxStyle={syntax()}
+              streaming={true}
+              internalBlockMode="top-level"
+              content={trimmed()}
+              tableOptions={{ style: "grid" }}
+              conceal={ctx.conceal()}
+              fg={theme.markdownText}
+              bg={theme.background}
+            />
+          </Match>
+        </Switch>
       </box>
     </Show>
   )
