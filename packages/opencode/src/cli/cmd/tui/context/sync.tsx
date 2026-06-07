@@ -76,6 +76,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       mcp_resource: {
         [key: string]: McpResource
       }
+      raw_request: {
+        [sessionID: string]: {
+          system: string
+          messages: unknown[]
+        }
+      }
       formatter: FormatterStatus[]
       vcs: VcsInfo | undefined
     }>({
@@ -97,6 +103,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session: [],
       session_status: {},
       session_diff: {},
+      raw_request: {},
       todo: {},
       message: {},
       part: {},
@@ -266,6 +273,14 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               session.time.updated = event.properties.timestamp
             }),
           )
+          break
+        }
+
+        case "session.raw_request": {
+          setStore("raw_request", event.properties.sessionID, {
+            system: event.properties.system,
+            messages: event.properties.messages,
+          })
           break
         }
 

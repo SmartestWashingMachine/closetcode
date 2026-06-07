@@ -469,6 +469,15 @@ export namespace Compaction {
   export type Ended = typeof Ended.Type
 }
 
+export const RawRequest = EventV2.define({
+  type: "session.raw_request",
+  schema: {
+    ...Base,
+    system: Schema.String,
+    messages: Schema.Array(Schema.Unknown),
+  },
+})
+
 const DurableDefinitions = [
   AgentSwitched,
   ModelSwitched,
@@ -498,7 +507,7 @@ const DurableDefinitions = [
   Compaction.Started,
   Compaction.Ended,
 ] as const
-const EphemeralDefinitions = [Text.Delta, Tool.Input.Delta, Reasoning.Delta, Compaction.Delta] as const
+const EphemeralDefinitions = [RawRequest, Text.Delta, Tool.Input.Delta, Reasoning.Delta, Compaction.Delta] as const
 
 export const Durable = Schema.Union(DurableDefinitions, { mode: "oneOf" }).pipe(Schema.toTaggedUnion("type"))
 export type DurableEvent = typeof Durable.Type

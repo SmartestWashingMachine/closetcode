@@ -136,6 +136,7 @@ const sessionBindingCommands = [
   "session.toggle.actions",
   "session.toggle.scrollbar",
   "session.toggle.generic_tool_output",
+  "session.toggle.raw_content",
   "session.first",
   "session.last",
   "session.messages_last_user",
@@ -170,6 +171,7 @@ const context = createContext<{
   showTimestamps: () => boolean
   showDetails: () => boolean
   showGenericToolOutput: () => boolean
+  showRawContent: () => boolean
   userMessageIDs: () => ReadonlySet<string>
   diffWrapMode: () => "word" | "none"
   providers: () => ReadonlyMap<string, Provider>
@@ -255,6 +257,7 @@ export function Session() {
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
+  const [showRawContent, setShowRawContent] = kv.signal("raw_content_visibility", true) // default true for verification
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
@@ -765,6 +768,15 @@ export function Session() {
       },
     },
     {
+      title: showRawContent() ? "Hide raw content" : "Show raw content",
+      value: "session.toggle.raw_content",
+      category: "Session",
+      run: () => {
+        setShowRawContent((prev) => !prev)
+        dialog.clear()
+      },
+    },
+    {
       title: "Page up",
       value: "session.page.up",
       category: "Session",
@@ -1177,6 +1189,7 @@ export function Session() {
           showTimestamps,
           showDetails,
           showGenericToolOutput,
+          showRawContent,
           userMessageIDs,
           diffWrapMode,
           providers,
@@ -1206,6 +1219,9 @@ export function Session() {
                 scrollAcceleration={scrollAcceleration()}
               >
                 <box height={1} />
+                <Show when={showRawContent()}>
+                  <RawRequestDisplay sessionID={route.sessionID} sync={sync} />
+                </Show>
                 <For each={messages()}>
                   {(message, index) => (
                     <Switch>
@@ -1453,7 +1469,7 @@ function UserMessage(props: {
   const text = createMemo(() => {
     const texts = props.parts
       .map((x) => {
-        if (x.type === "text" && !x.synthetic) {
+        if (x.type === "text" && (!x.synthetic || ctx.showRawContent())) {
           return x.text
         }
         return null
@@ -1606,7 +1622,7 @@ function AssistantMessage(props: {
     const offsets: Record<string, number> = {}
     let offset = 0
     for (const p of props.parts) {
-      if (p.type === "text" && !p.synthetic && !p.ignored) {
+      if (p.type === "text" && (!p.synthetic || ctx.showRawContent()) && !p.ignored) {
         offsets[p.id] = offset
         offset += p.text.length
       }
@@ -1711,6 +1727,60 @@ function AssistantMessage(props: {
         </Match>
       </Switch>
     </box>
+  )
+}
+
+function RawRequestDisplay(props: {
+  sessionID: string
+  sync: ReturnType<typeof useSync>
+}) {
+  const { theme } = useTheme()
+  const [expanded, setExpanded] = createSignal(false)
+
+  const raw = createMemo(() => props.sync.data.raw_request[props.sessionID])
+
+  const toggle = () => setExpanded((prev) => !prev)
+
+  return (
+    <Show when={raw()}>
+      <box
+        marginTop={1}
+        marginBottom={1}
+        border={["top", "bottom"]}
+        borderColor={theme.borderActive}
+      >
+        <box
+          paddingTop={1}
+          paddingBottom={1}
+          paddingLeft={2}
+          paddingRight={2}
+          flexDirection="column"
+        >
+          <box onMouseUp={toggle}>
+            <text fg={theme.text}>
+              <span style={{ fg: theme.accent }}> ▣ </span>
+              Raw LLM Request {expanded() ? "▼" : "▶"}
+            </text>
+          </box>
+          <Show when={expanded()}>
+            <box paddingTop={1} flexDirection="column">
+              <text fg={theme.textMuted}>System:</text>
+              <box paddingLeft={2}>
+                <text fg={theme.text}>{raw()!.system}</text>
+              </box>
+              <box paddingTop={1}>
+                <text fg={theme.textMuted}>Messages ({raw()!.messages.length}):</text>
+              </box>
+              <box paddingLeft={2}>
+                <text fg={theme.text}>
+                  {JSON.stringify(raw()!.messages, null, 2) as any}
+                </text>
+              </box>
+            </box>
+          </Show>
+        </box>
+      </box>
+    </Show>
   )
 }
 
