@@ -342,6 +342,9 @@ export function Session() {
   const dialog = useDialog()
   const renderer = useRenderer()
 
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [searchMatchIDs, setSearchMatchIDs] = createSignal(new Set<string>())
+
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
     if (evt.properties.status.type !== "retry") return
@@ -1281,6 +1284,8 @@ export function Session() {
                           message={message as UserMessage}
                           parts={sync.data.part[message.id] ?? []}
                           pending={pending()}
+                          searchQuery={searchQuery()}
+                          searchMatchIDs={searchMatchIDs()}
                         />
                       </Match>
                       <Match when={message.role === "assistant"}>
@@ -1288,6 +1293,8 @@ export function Session() {
                           last={lastAssistant()?.id === message.id}
                           message={message as AssistantMessage}
                           parts={sync.data.part[message.id] ?? []}
+                          searchQuery={searchQuery()}
+                          searchMatchIDs={searchMatchIDs()}
                         />
                       </Match>
                     </Switch>
@@ -1332,6 +1339,16 @@ export function Session() {
                         if (!child) return
                         const targetY = child.y + child.height * match.ratio
                         scroll.scrollBy(targetY - scroll.y - scroll.height / 2)
+                      }}
+                      onSearch={(query, matches) => {
+                        setSearchQuery(query)
+                        setSearchMatchIDs(new Set(matches.map((m) => m.messageID)))
+                      }}
+                      onSearchActive={(active) => {
+                        if (!active) {
+                          setSearchQuery("")
+                          setSearchMatchIDs(new Set<string>())
+                        }
                       }}
                       sessionID={route.sessionID}
                       right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
@@ -1378,12 +1395,31 @@ const MIME_BADGE: Record<string, string> = {
   "application/x-directory": "dir",
 }
 
+function splitHighlight(text: string, query: string): (string | { highlight: true; text: string })[] {
+  if (!query) return [text]
+  const lowerText = text.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  const parts: (string | { highlight: true; text: string })[] = []
+  let pos = 0
+  let idx = lowerText.indexOf(lowerQuery)
+  while (idx !== -1) {
+    if (idx > pos) parts.push(text.slice(pos, idx))
+    parts.push({ highlight: true, text: text.slice(idx, idx + query.length) })
+    pos = idx + query.length
+    idx = lowerText.indexOf(lowerQuery, pos)
+  }
+  if (pos < text.length) parts.push(text.slice(pos))
+  return parts
+}
+
 function UserMessage(props: {
   message: UserMessage
   parts: Part[]
   onMouseUp: () => void
   index: number
   pending?: string
+  searchQuery?: string
+  searchMatchIDs?: Set<string>
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1407,6 +1443,11 @@ function UserMessage(props: {
   const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
 
   const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
+
+  const highlightedParts = createMemo(() => {
+    if (!props.searchQuery || !props.searchMatchIDs?.has(props.message.id)) return undefined
+    return splitHighlight(text(), props.searchQuery)
+  })
 
   return (
     <>
@@ -1432,7 +1473,19 @@ function UserMessage(props: {
             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
             flexShrink={0}
           >
-            <text fg={theme.text}>{text()}</text>
+            <text fg={theme.text}>
+              <Show when={highlightedParts()} fallback={text()}>
+                <For each={highlightedParts()}>
+                  {(part) =>
+                    typeof part === "string" ? (
+                      part
+                    ) : (
+                      <span style={{ bg: theme.primary, fg: theme.background }}>{part.text}</span>
+                    )
+                  }
+                </For>
+              </Show>
+            </text>
             <Show when={files().length}>
               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
                 <For each={files()}>
@@ -1484,7 +1537,13 @@ function UserMessage(props: {
   )
 }
 
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: {
+  message: AssistantMessage
+  parts: Part[]
+  last: boolean
+  searchQuery?: string
+  searchMatchIDs?: Set<string>
+}) {
   const ctx = use()
   const local = useLocal()
   const { theme } = useTheme()
@@ -1519,6 +1578,8 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
                 component={component()}
                 part={part as any}
                 message={props.message}
+                searchQuery={props.searchQuery}
+                searchMatchIDs={props.searchMatchIDs}
               />
             </Show>
           )
@@ -1698,22 +1759,49 @@ function ReasoningHeader(props: {
   )
 }
 
-function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
+function TextPart(props: {
+  last: boolean
+  part: TextPart
+  message: AssistantMessage
+  searchQuery?: string
+  searchMatchIDs?: Set<string>
+}) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const showHighlight = createMemo(() => {
+    if (!props.searchQuery || !props.searchMatchIDs?.has(props.message.id)) return false
+    return props.part.text.toLowerCase().includes(props.searchQuery.toLowerCase())
+  })
   return (
     <Show when={props.part.text.trim()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
-        <markdown
-          syntaxStyle={syntax()}
-          streaming={true}
-          internalBlockMode="top-level"
-          content={props.part.text.trim()}
-          tableOptions={{ style: "grid" }}
-          conceal={ctx.conceal()}
-          fg={theme.markdownText}
-          bg={theme.background}
-        />
+        <Switch>
+          <Match when={showHighlight()}>
+            <text fg={theme.text} wrapMode="word">
+              <For each={splitHighlight(props.part.text.trim(), props.searchQuery!)}>
+                {(part) =>
+                  typeof part === "string" ? (
+                    part
+                  ) : (
+                    <span style={{ bg: theme.primary, fg: theme.background }}>{part.text}</span>
+                  )
+                }
+              </For>
+            </text>
+          </Match>
+          <Match when={true}>
+            <markdown
+              syntaxStyle={syntax()}
+              streaming={true}
+              internalBlockMode="top-level"
+              content={props.part.text.trim()}
+              tableOptions={{ style: "grid" }}
+              conceal={ctx.conceal()}
+              fg={theme.markdownText}
+              bg={theme.background}
+            />
+          </Match>
+        </Switch>
       </box>
     </Show>
   )

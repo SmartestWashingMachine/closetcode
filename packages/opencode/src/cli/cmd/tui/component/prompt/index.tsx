@@ -68,6 +68,8 @@ export type PromptProps = {
   onSubmit?: () => void
   ref?: (ref: PromptRef | undefined) => void
   onSearchSelect?: (match: SearchMatch) => void
+  onSearch?: (query: string, matches: SearchMatch[], currentIndex: number) => void
+  onSearchActive?: (active: boolean) => void
   hint?: JSX.Element
   right?: JSX.Element
   showPlaceholder?: boolean
@@ -865,6 +867,7 @@ export function Prompt(props: PromptProps) {
     setStore("searchMatches", [])
     setStore("searchCurrentIndex", 0)
     setStore("mode", "search")
+    props.onSearchActive?.(true)
   }
 
   function exitSearchMode() {
@@ -877,6 +880,7 @@ export function Prompt(props: PromptProps) {
     }
     stashedPrompt = undefined
     stashedCursor = undefined
+    props.onSearchActive?.(false)
   }
 
   useBindings(() => {
@@ -952,6 +956,7 @@ export function Prompt(props: PromptProps) {
     const matches = findMatches(partsByMessage, query)
     setStore("searchMatches", matches)
     setStore("searchCurrentIndex", 0)
+    props.onSearch?.(query, matches, 0)
     if (matches.length > 0) props.onSearchSelect?.(matches[0])
   })
 
