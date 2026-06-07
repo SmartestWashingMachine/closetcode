@@ -1414,8 +1414,23 @@ export const layer = Layer.effect(
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
             const system = [...env, ...instructions, ...(skills ? [skills] : [])]
+
+            const requestMessages = [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+
+            // Capture the exact LLM request for the raw content transparency toggle.
+            // This publishes the full system prompt (base + env + instructions + skills + user system)
+            // and the complete messages array as they would be sent to the provider API.
+            const basePrompt = agent.prompt ?? SystemPrompt.provider(model).join("\n")
+            const fullSystem = [basePrompt, ...system, ...(lastUser.system ? [lastUser.system] : [])].join("\n\n")
+            yield* events.publish(SessionEvent.RawRequest, {
+              timestamp: DateTime.makeUnsafe(Date.now()),
+              sessionID,
+              system: fullSystem,
+              messages: requestMessages,
+            }).pipe(Effect.ignore)
+
             const result = yield* handle.process({
               user: lastUser,
               agent,
@@ -1423,7 +1438,7 @@ export const layer = Layer.effect(
               sessionID,
               parentSessionID: session.parentID,
               system,
-              messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
+              messages: requestMessages,
               tools,
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,

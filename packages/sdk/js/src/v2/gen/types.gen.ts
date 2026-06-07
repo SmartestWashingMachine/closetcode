@@ -5,6 +5,7 @@ export type ClientOptions = {
 }
 
 export type Event =
+  | EventSessionRawRequest
   | EventModelsDevRefreshed
   | EventPluginAdded
   | EventCatalogModelUpdated
@@ -93,6 +94,16 @@ export type Event =
   | EventServerConnected
   | EventGlobalDisposed
   | EventServerInstanceDisposed
+
+export type EventSessionRawRequest = {
+  id: string
+  type: "session.raw_request"
+  properties: {
+    sessionID: string
+    system: string
+    messages: Array<unknown>
+  }
+}
 
 export type QuestionReplied = {
   sessionID: string
@@ -1660,6 +1671,7 @@ export type GlobalEvent = {
     | SyncEventSessionNextRetried
     | SyncEventSessionNextCompactionStarted
     | SyncEventSessionNextCompactionEnded
+    | EventSessionRawRequest
 }
 
 /**
