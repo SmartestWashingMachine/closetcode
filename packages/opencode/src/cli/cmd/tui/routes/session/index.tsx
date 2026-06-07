@@ -1327,6 +1327,11 @@ export function Session() {
                       onSubmit={() => {
                         toBottom()
                       }}
+                      onSearchSelect={(match) => {
+                        const child = scroll.getChildren().find((c) => c.id === match.messageID)
+                        if (!child) return
+                        scroll.scrollBy(child.y - scroll.y - 1)
+                      }}
                       sessionID={route.sessionID}
                       right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
                     />
