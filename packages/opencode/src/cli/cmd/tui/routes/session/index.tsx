@@ -1338,7 +1338,7 @@ export function Session() {
                         const child = scroll.getChildren().find((c) => c.id === match.messageID)
                         if (!child) return
                         const targetY = child.y + child.height * match.ratio
-                        scroll.scrollBy(targetY - scroll.y - scroll.height / 2)
+                        scroll.scrollTo(Math.max(0, targetY - scroll.height / 2))
                       }}
                       onSearch={(query, matches) => {
                         setSearchQuery(query)
@@ -1567,7 +1567,7 @@ function AssistantMessage(props: {
   const backgroundShortcut = useCommandShortcut("session.background")
 
   return (
-    <>
+    <box id={props.message.id}>
       <For each={props.parts}>
         {(part, index) => {
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
@@ -1646,7 +1646,7 @@ function AssistantMessage(props: {
           </box>
         </Match>
       </Switch>
-    </>
+    </box>
   )
 }
 
