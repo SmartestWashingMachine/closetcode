@@ -924,7 +924,10 @@ export function Prompt(props: PromptProps) {
             const prev = store.searchCurrentIndex > 0 ? store.searchCurrentIndex - 1 : store.searchMatches.length - 1
             setStore("searchCurrentIndex", prev)
             const match = store.searchMatches[prev]
-            if (match) props.onSearchSelect?.(match)
+            if (match) {
+              props.onSearch?.(store.searchQuery, store.searchMatches, prev)
+              props.onSearchSelect?.(match)
+            }
           },
         },
         {
@@ -935,7 +938,10 @@ export function Prompt(props: PromptProps) {
             const next = store.searchCurrentIndex < store.searchMatches.length - 1 ? store.searchCurrentIndex + 1 : 0
             setStore("searchCurrentIndex", next)
             const match = store.searchMatches[next]
-            if (match) props.onSearchSelect?.(match)
+            if (match) {
+              props.onSearch?.(store.searchQuery, store.searchMatches, next)
+              props.onSearchSelect?.(match)
+            }
           },
         },
       ],

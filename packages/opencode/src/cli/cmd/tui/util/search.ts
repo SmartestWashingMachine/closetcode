@@ -3,6 +3,7 @@ import type { Part } from "@opencode-ai/sdk/v2"
 export type SearchMatch = {
   messageID: string
   ratio: number
+  charIndex: number
 }
 
 export function findMatches(
@@ -39,7 +40,7 @@ export function findMatches(
 
     for (const charIndex of matchPositions) {
       const ratio = text.length > 0 ? charIndex / text.length : 0
-      results.push({ messageID, ratio })
+      results.push({ messageID, ratio, charIndex })
     }
   }
 

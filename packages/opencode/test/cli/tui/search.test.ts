@@ -64,6 +64,7 @@ describe("findMatches", () => {
     expect(result[0].messageID).toBe("msg_1")
     expect(result[0].ratio).toBeGreaterThan(0)
     expect(result[0].ratio).toBeLessThan(1)
+    expect(result[0].charIndex).toBe(4)
   })
 
   test("finds query in assistant text part", () => {
@@ -85,6 +86,10 @@ describe("findMatches", () => {
     // Each match should have a different ratio (different position in text)
     const ratios = new Set(result.map((m) => m.ratio))
     expect(ratios.size).toBe(3)
+    // Each match should have a unique charIndex
+    expect(result[0].charIndex).toBe(0)
+    expect(result[1].charIndex).toBe(8)
+    expect(result[2].charIndex).toBe(16)
   })
 
   test("finds matches across multiple messages", () => {
@@ -155,6 +160,7 @@ describe("findMatches", () => {
     })
     const result = findMatches(parts, "match")
     expect(result[0].ratio).toBe(0)
+    expect(result[0].charIndex).toBe(0)
   })
 
   test("sets correct ratio for match at end of text", () => {
@@ -163,6 +169,7 @@ describe("findMatches", () => {
     })
     const result = findMatches(parts, "match")
     expect(result[0].ratio).toBeCloseTo(10 / 15, 5) // "text with " is 10 chars, "text with match" is 15
+    expect(result[0].charIndex).toBe(10)
   })
 
   test("includes both text parts in a single message concatenation", () => {
