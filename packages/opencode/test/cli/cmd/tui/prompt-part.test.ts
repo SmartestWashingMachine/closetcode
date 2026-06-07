@@ -74,4 +74,33 @@ describe("prompt part", () => {
       ]),
     ).toBe(`keep ${marker} then alpha\nbeta\ngamma tail`)
   })
+
+  test("expandTrackedPastedText replaces placeholder with longer text preserving surrounding content", () => {
+    const result = expandTrackedPastedText("hello [Pasted ~3 lines] world", [
+      {
+        start: Bun.stringWidth("hello "),
+        end: Bun.stringWidth("hello [Pasted ~3 lines]"),
+        text: "line1\nline2\nline3",
+      },
+    ])
+    expect(result).toBe("hello line1\nline2\nline3 world")
+  })
+
+  test("expandTrackedPastedText handles long replacement in multiline context", () => {
+    // promptOffsetWidth counts newlines as 1, matching the extmark positions
+    const promptOffsetWidth = (s: string) => {
+      let w = 0
+      for (const c of s) w += c === "\n" ? 1 : Bun.stringWidth(c)
+      return w
+    }
+    const input = "above\n[Pasted ~5 lines]\nbelow"
+    const result = expandTrackedPastedText(input, [
+      {
+        start: promptOffsetWidth("above\n"),
+        end: promptOffsetWidth("above\n[Pasted ~5 lines]"),
+        text: "a\nb\nc\nd\ne",
+      },
+    ])
+    expect(result).toBe("above\na\nb\nc\nd\ne\nbelow")
+  })
 })
