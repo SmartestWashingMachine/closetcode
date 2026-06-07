@@ -1444,6 +1444,19 @@ export const layer = Layer.effect(
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
 
+            // Also publish after the LLM responds so the raw request includes
+            // the complete conversation with the assistant's response.
+            const responseMsgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(
+              Effect.provideService(Database.Service, database),
+            )
+            const responseModelMsgs = yield* MessageV2.toModelMessagesEffect(responseMsgs, model)
+            yield* events.publish(SessionEvent.RawRequest, {
+              timestamp: DateTime.makeUnsafe(Date.now()),
+              sessionID,
+              system: fullSystem,
+              messages: responseModelMsgs,
+            }).pipe(Effect.ignore)
+
             if (structured !== undefined) {
               handle.message.structured = structured
               handle.message.finish = handle.message.finish ?? "stop"
