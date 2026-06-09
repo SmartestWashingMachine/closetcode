@@ -253,7 +253,7 @@ export function Session() {
   const [timestamps, setTimestamps] = kv.signal<"hide" | "show">("timestamps", "hide")
   const [showDetails, setShowDetails] = kv.signal("tool_details_visibility", true)
   const [showAssistantMetadata, _setShowAssistantMetadata] = kv.signal("assistant_metadata_visibility", true)
-  const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible", false)
+  const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible_v2", true)
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
@@ -1447,7 +1447,11 @@ function splitHighlight(text: string, query: string, activeCharIndex?: number): 
   return parts
 }
 
-function activeMatchCharIndex(searchMatches: SearchMatch[], searchCurrentIndex: number, messageID: string): number | undefined {
+function activeMatchCharIndex(
+  searchMatches: SearchMatch[],
+  searchCurrentIndex: number,
+  messageID: string,
+): number | undefined {
   const match = searchMatches[searchCurrentIndex]
   if (!match || match.messageID !== messageID) return undefined
   return match.charIndex
@@ -1730,10 +1734,7 @@ function AssistantMessage(props: {
   )
 }
 
-function RawRequestDisplay(props: {
-  sessionID: string
-  sync: ReturnType<typeof useSync>
-}) {
+function RawRequestDisplay(props: { sessionID: string; sync: ReturnType<typeof useSync> }) {
   const { theme } = useTheme()
   const [expanded, setExpanded] = createSignal(false)
 
@@ -1743,19 +1744,8 @@ function RawRequestDisplay(props: {
 
   return (
     <Show when={raw()}>
-      <box
-        marginTop={1}
-        marginBottom={1}
-        border={["top", "bottom"]}
-        borderColor={theme.borderActive}
-      >
-        <box
-          paddingTop={1}
-          paddingBottom={1}
-          paddingLeft={2}
-          paddingRight={2}
-          flexDirection="column"
-        >
+      <box marginTop={1} marginBottom={1} border={["top", "bottom"]} borderColor={theme.borderActive}>
+        <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} flexDirection="column">
           <box onMouseUp={toggle}>
             <text fg={theme.text}>
               <span style={{ fg: theme.accent }}> ▣ </span>
@@ -1772,9 +1762,7 @@ function RawRequestDisplay(props: {
                 <text fg={theme.textMuted}>Messages ({raw()!.messages.length}):</text>
               </box>
               <box paddingLeft={2}>
-                <text fg={theme.text}>
-                  {JSON.stringify(raw()!.messages, null, 2) as any}
-                </text>
+                <text fg={theme.text}>{JSON.stringify(raw()!.messages, null, 2) as any}</text>
               </box>
             </box>
           </Show>
